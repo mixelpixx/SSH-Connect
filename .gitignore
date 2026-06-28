@@ -1,0 +1,5 @@
+/target
+hosts.toml
+*.log
+reports/
+backups/

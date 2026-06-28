@@ -1,0 +1,70 @@
+[package]
+name = "ssh-connect"
+version = "0.1.0"
+edition = "2021"
+description = "SSH-Connect — unified SSH/Telnet/Serial console + VPS/Ubuntu management as an MCP server (Rust)"
+license = "MIT"
+
+[[bin]]
+name = "ssh-connect"
+path = "src/main.rs"
+
+[dependencies]
+rmcp = { version = "1.8", features = [
+    "server",
+    "client",
+    "macros",
+    "transport-io",
+] }
+
+# SSH + SFTP (pure Rust, no C dependencies)
+# ring feature avoids the aws-lc-rs C build dependency (default on 0.60)
+russh = { version = "0.60", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
+russh-sftp = "2.1"
+
+# Telnet/Serial transports for interactive console management
+serialport = "4"
+tokio-serial = "5"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# JSON Schema generation — must match rmcp's version
+schemars = "1.0"
+
+# hosts.toml inventory parsing
+toml = "0.8"
+
+# Prompt / ANSI / pager matching for interactive sessions
+regex = "1"
+
+# Async trait objects for the Transport abstraction (dyn-compatible async fns)
+async-trait = "0.1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Connection ID generation
+uuid = { version = "1", features = ["v4"] }
+
+# Locating the per-user known_hosts file (~/.ssh-connect/known_hosts)
+dirs = "5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
+[profile.release]
+opt-level      = 3        # network/crypto tool — favor speed over min size
+lto            = "fat"
+codegen-units  = 1
+strip          = "symbols"
+panic          = "abort"

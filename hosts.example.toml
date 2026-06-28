@@ -1,0 +1,46 @@
+# SSH-Connect host inventory.
+#
+# Copy this file to `hosts.toml` (gitignored) and edit. Each [[host]] block names
+# a device you can reach by `name` alone via the `connect` tool — explicit
+# arguments to `connect` override these defaults. (This inventory is for the
+# interactive console tools; the server-ops `ssh_connect` tool takes its host
+# arguments directly.)
+#
+# Point at a different file with the SSHCONNECT_HOSTS environment variable.
+#
+# Secrets: prefer environment variables over committing passwords. For a host
+# named "core-sw-01", the password override is SSHCONNECT_CORE_SW_01_PASSWORD
+# (name upper-cased, non-alphanumerics collapsed to "_"). The same pattern works
+# for USERNAME, HOST, PORT, and KEY_PATH.
+
+# SSH switch authenticated with a private key.
+[[host]]
+name     = "core-sw-01"
+host     = "10.0.0.2"
+protocol = "ssh"
+port     = 22
+username = "admin"
+key_path = "C:/Users/you/.ssh/lab_ed25519"
+# prompt = "core-sw-01#"        # optional explicit prompt regex
+
+# SSH switch authenticated with a password (supply via env, not here):
+#   $env:SSHCONNECT_EDGE_SW_02_PASSWORD = "secret"
+[[host]]
+name     = "edge-sw-02"
+host     = "10.0.0.3"
+protocol = "ssh"
+username = "admin"
+
+# Legacy device reachable only over Telnet.
+[[host]]
+name     = "old-access-07"
+host     = "10.0.1.7"
+protocol = "telnet"
+port     = 23
+
+# Console-cable access over a serial port.
+[[host]]
+name        = "console-a"
+protocol    = "serial"
+serial_port = "COM3"
+baud        = 9600
