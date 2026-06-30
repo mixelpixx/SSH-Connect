@@ -23,7 +23,7 @@ use crate::transport::SessionManager;
 #[derive(Clone)]
 pub enum ServerRole {
     Owner,
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     Proxy(rmcp::Peer<rmcp::RoleClient>),
 }
 
@@ -73,7 +73,7 @@ impl SshConnectServer {
 
     /// Build a Proxy server that forwards tool calls to the broker owner over
     /// the given client peer. Local state stays empty (unused).
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn new_proxy(peer: rmcp::Peer<rmcp::RoleClient>) -> Self {
         Self {
             pool: ConnectionPool::new(),
@@ -103,7 +103,7 @@ impl ServerHandler for SshConnectServer {
                 let tcc = ToolCallContext::new(self, request, context);
                 self.tool_router.call(tcc).await
             }
-            #[cfg(windows)]
+            #[cfg(any(windows, unix))]
             ServerRole::Proxy(peer) => peer.call_tool(request).await.map_err(|e| {
                 ErrorData::internal_error(format!("broker proxy call failed: {e}"), None)
             }),

@@ -27,13 +27,13 @@ async fn main() -> Result<()> {
 
     // Elect a broker role so multiple instances share one set of live sessions.
     let server = match broker::elect().await {
-        #[cfg(windows)]
-        Election::Owner(pipe) => {
+        #[cfg(any(windows, unix))]
+        Election::Owner(listener) => {
             let owner = SshConnectServer::new();
-            tokio::spawn(broker::serve_owner(pipe, owner.clone()));
+            tokio::spawn(broker::serve_owner(listener, owner.clone()));
             owner
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         Election::Proxy(peer) => SshConnectServer::new_proxy(peer),
         Election::OwnerLocal => SshConnectServer::new(),
     };

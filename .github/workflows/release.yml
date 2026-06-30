@@ -1,0 +1,71 @@
+name: release
+
+# Build release binaries for Linux, macOS, and Windows and attach them to the
+# GitHub Release for a pushed tag (e.g. `git tag v0.1.0 && git push --tags`).
+# Also runnable on demand from the Actions tab.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps (libudev for serialport)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          dir="target/${{ matrix.target }}/release"
+          tar -czf "ssh-connect-${{ matrix.target }}.tar.gz" -C "$dir" ssh-connect
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/ssh-connect.exe" `
+            -DestinationPath "ssh-connect-${{ matrix.target }}.zip"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ssh-connect-${{ matrix.target }}.tar.gz
+            ssh-connect-${{ matrix.target }}.zip
+
+      - name: Upload workflow artifact (non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-connect-${{ matrix.target }}
+          path: |
+            ssh-connect-${{ matrix.target }}.tar.gz
+            ssh-connect-${{ matrix.target }}.zip
+          if-no-files-found: ignore

@@ -69,13 +69,23 @@ relying on a long timeout (see the `vps-management` skill).
 
 ## Build
 
-Requires a recent stable Rust toolchain. All dependencies (including `rmcp = "1.8"`
-from crates.io) are fetched by Cargo; a fresh clone builds with no extra setup.
+Requires a recent stable Rust toolchain. Rust dependencies (including `rmcp = "1.8"`
+from crates.io) are fetched by Cargo.
 
 ```sh
 cargo build --release
 # Binary: target/release/ssh-connect  (ssh-connect.exe on Windows)
 ```
+
+Windows and macOS need no system packages. On **Linux**, the `serialport` crate
+(used for `list_com_ports` and serial console access) needs `libudev` at build time:
+
+```sh
+sudo apt-get install -y libudev-dev pkg-config   # Debian/Ubuntu
+```
+
+Prebuilt binaries for Linux, macOS, and Windows are produced by the `release`
+GitHub Actions workflow and attached to tagged releases.
 
 ## Register with an MCP client
 
@@ -114,16 +124,17 @@ broker/role messages).
 
 ## Broker (multi-instance session sharing)
 
-On Windows, the first instance becomes the owner of a named pipe
-(`\\.\pipe\ssh-connect-broker-v1`) and holds the live connections and COM ports. Later
-instances act as proxies that forward `tools/call` to the owner, so a session opened in
-one client is usable from another and two clients cannot collide on the same serial
-port. Tool schemas are served locally by every instance. On non-Windows platforms each
-instance is a standalone owner.
+The first instance becomes the owner of a per-machine rendezvous endpoint — a named
+pipe (`\\.\pipe\ssh-connect-broker-v1`) on Windows, or a Unix domain socket under
+`$XDG_RUNTIME_DIR` (falling back to the temp dir) on Linux/macOS — and holds the live
+connections and COM ports. Later instances act as proxies that forward `tools/call` to
+the owner, so a session opened in one client is usable from another and two clients
+cannot collide on the same serial port. Tool schemas are served locally by every
+instance. On a platform with neither transport, each instance is a standalone owner.
 
 Limitation: if the owner process exits, existing proxies do not currently re-elect a new
 owner mid-session — restart the affected client. A newly started instance always elects
-correctly.
+correctly (and clears a stale socket).
 
 ## Tests
 

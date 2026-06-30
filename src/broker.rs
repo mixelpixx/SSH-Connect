@@ -2,94 +2,59 @@
 //! client) cooperate instead of fighting over exclusive resources like a serial
 //! port.
 //!
-//! On startup each instance races to create a Windows named pipe:
-//! - The winner is the **owner**: it holds the real connection registries (all
-//!   live SSH/Telnet/serial sessions and COM ports) and serves the pipe to
-//!   peers. Each connecting peer gets a full MCP server bound to the *same*
-//!   Arc-backed state, so `connect` in one window and `run_command` from another
-//!   operate on the same device.
-//! - The losers are **proxies**: they open the pipe as an MCP *client* and the
-//!   stdio-facing server forwards every `tools/call` to the owner.
+//! On startup each instance tries to own a per-machine rendezvous endpoint:
+//! - **Windows:** a named pipe (`\\.\pipe\ssh-connect-broker-v1`).
+//! - **Unix (Linux/macOS):** a Unix domain socket under `$XDG_RUNTIME_DIR`
+//!   (falling back to the temp dir), e.g. `ssh-connect-broker-v1.sock`.
 //!
-//! Tool *schemas* are identical across processes (same binary), so `tools/list`
-//! is always answered locally — only execution (`tools/call`) is forwarded.
+//! The winner is the **owner**: it holds the real connection registries (all
+//! live SSH/Telnet/serial sessions and COM ports) and serves the endpoint to
+//! peers. Each connecting peer gets a full MCP server bound to the *same*
+//! Arc-backed state, so `connect` in one client and `run_command` from another
+//! operate on the same device. The losers are **proxies**: they open the
+//! endpoint as an MCP *client* and the stdio-facing server forwards every
+//! `tools/call` to the owner. Tool *schemas* are identical across processes
+//! (same binary), so `tools/list` is always answered locally.
 //!
-//! On non-Windows platforms the named-pipe machinery is omitted and every
-//! instance is simply a local owner.
+//! On a platform with neither transport, every instance is a standalone owner.
 
 use crate::server::SshConnectServer;
 
-/// Default machine-wide pipe name. Versioned so mismatched binaries don't
-/// cross-talk during an upgrade.
 #[cfg(windows)]
 pub const DEFAULT_PIPE: &str = r"\\.\pipe\ssh-connect-broker-v1";
 
 /// The outcome of broker election, used by `main` to build the server.
 pub enum Election {
-    /// This instance owns the hardware. On Windows it also carries the first
-    /// pipe-server instance so the accept loop can be spawned.
-    #[cfg(windows)]
-    Owner(tokio::net::windows::named_pipe::NamedPipeServer),
-    /// Owner with no pipe (non-Windows, or standalone fallback).
+    /// Standalone owner with no cross-process sharing (no broker transport).
     OwnerLocal,
-    /// This instance forwards to an existing owner over the given client peer.
-    #[cfg(windows)]
+    /// This instance owns the broker; carries the platform listener so the
+    /// accept loop can be spawned once the server is built.
+    #[cfg(any(windows, unix))]
+    Owner(OwnerListener),
+    /// This instance forwards tool calls to an existing owner over the given peer.
+    #[cfg(any(windows, unix))]
     Proxy(rmcp::Peer<rmcp::RoleClient>),
 }
 
-/// Decide this process's broker role.
+/// Opaque wrapper over the platform's accept endpoint, so `main` stays
+/// platform-neutral.
 #[cfg(windows)]
-pub async fn elect() -> Election {
-    use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+pub struct OwnerListener(tokio::net::windows::named_pipe::NamedPipeServer);
+#[cfg(unix)]
+pub struct OwnerListener(tokio::net::UnixListener);
 
-    // Try to become the owner by creating the first pipe instance.
-    match ServerOptions::new().first_pipe_instance(true).create(DEFAULT_PIPE) {
-        Ok(server) => {
-            tracing::info!(pipe = DEFAULT_PIPE, "ssh-connect: BROKER OWNER (holds devices, serves peers)");
-            Election::Owner(server)
-        }
-        Err(_) => {
-            // Someone else owns the pipe — connect as a proxy, retrying briefly
-            // to absorb the race where the owner is mid-creation.
-            for _ in 0..40 {
-                if let Ok(client) = ClientOptions::new().open(DEFAULT_PIPE) {
-                    match connect_proxy(client).await {
-                        Some(peer) => {
-                            tracing::info!(pipe = DEFAULT_PIPE, "ssh-connect: PROXY to existing broker");
-                            return Election::Proxy(peer);
-                        }
-                        None => break,
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-            // Could neither own nor reach an owner; run standalone so this
-            // instance still works in isolation.
-            tracing::warn!("ssh-connect: no broker reachable; running standalone owner");
-            Election::OwnerLocal
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub async fn elect() -> Election {
-    Election::OwnerLocal
-}
-
-/// Complete the MCP client handshake to the owner over a pipe client, returning
-/// the client peer used to forward calls. The running client task is kept alive
-/// for the process lifetime.
-#[cfg(windows)]
-async fn connect_proxy(
-    client: tokio::net::windows::named_pipe::NamedPipeClient,
-) -> Option<rmcp::Peer<rmcp::RoleClient>> {
+/// Complete the MCP client handshake to the owner over any duplex stream,
+/// returning the client peer used to forward calls. The running client task is
+/// kept alive for the process lifetime.
+#[cfg(any(windows, unix))]
+async fn handshake_client<S>(stream: S) -> Option<rmcp::Peer<rmcp::RoleClient>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
     use rmcp::ServiceExt;
-
-    match ().serve(client).await {
+    match ().serve(stream).await {
         Ok(running) => {
             let peer = running.peer().clone();
-            // Keep the client service running; if the owner dies the peer's
-            // calls will error and the user can restart this client.
             tokio::spawn(async move {
                 let _ = running.waiting().await;
             });
@@ -102,23 +67,45 @@ async fn connect_proxy(
     }
 }
 
-/// Owner accept loop: hand each connecting peer its own pipe instance and serve
-/// a full MCP server bound to the shared `owner` state on a dedicated task.
+// ---- Windows: named-pipe broker -------------------------------------------
+
 #[cfg(windows)]
-pub async fn serve_owner(
-    first: tokio::net::windows::named_pipe::NamedPipeServer,
-    owner: SshConnectServer,
-) {
+pub async fn elect() -> Election {
+    use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+
+    match ServerOptions::new().first_pipe_instance(true).create(DEFAULT_PIPE) {
+        Ok(server) => {
+            tracing::info!(pipe = DEFAULT_PIPE, "ssh-connect: BROKER OWNER (holds devices, serves peers)");
+            Election::Owner(OwnerListener(server))
+        }
+        Err(_) => {
+            for _ in 0..40 {
+                if let Ok(client) = ClientOptions::new().open(DEFAULT_PIPE) {
+                    if let Some(peer) = handshake_client(client).await {
+                        tracing::info!(pipe = DEFAULT_PIPE, "ssh-connect: PROXY to existing broker");
+                        return Election::Proxy(peer);
+                    }
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            tracing::warn!("ssh-connect: no broker reachable; running standalone owner");
+            Election::OwnerLocal
+        }
+    }
+}
+
+#[cfg(windows)]
+pub async fn serve_owner(listener: OwnerListener, owner: SshConnectServer) {
     use rmcp::ServiceExt;
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    let mut server = first;
+    let mut server = listener.0;
     loop {
         if let Err(e) = server.connect().await {
             tracing::warn!(error = %e, "broker: pipe accept failed");
             break;
         }
-        // Pre-create the next instance for the next peer.
         let next = match ServerOptions::new().create(DEFAULT_PIPE) {
             Ok(s) => s,
             Err(e) => {
@@ -139,7 +126,86 @@ pub async fn serve_owner(
     }
 }
 
-// Referenced by `main` on all platforms to keep the signature stable.
-#[cfg(not(windows))]
-#[allow(dead_code)]
-pub async fn serve_owner(_first: (), _owner: SshConnectServer) {}
+// ---- Unix (Linux/macOS): domain-socket broker -----------------------------
+
+#[cfg(unix)]
+fn socket_path() -> std::path::PathBuf {
+    // Prefer the per-user runtime dir; fall back to a per-user name in the temp
+    // dir so distinct users don't collide on a shared /tmp.
+    if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
+        if !dir.is_empty() {
+            return std::path::Path::new(&dir).join("ssh-connect-broker-v1.sock");
+        }
+    }
+    let user = std::env::var("USER").unwrap_or_else(|_| "default".to_string());
+    std::env::temp_dir().join(format!("ssh-connect-broker-v1-{user}.sock"))
+}
+
+#[cfg(unix)]
+pub async fn elect() -> Election {
+    use tokio::net::{UnixListener, UnixStream};
+
+    let path = socket_path();
+
+    // If a live owner is already listening, attach as a proxy.
+    if let Ok(stream) = UnixStream::connect(&path).await {
+        if let Some(peer) = handshake_client(stream).await {
+            tracing::info!(socket = %path.display(), "ssh-connect: PROXY to existing broker");
+            return Election::Proxy(peer);
+        }
+    }
+
+    // No live owner. Clear any stale socket file left by a crashed owner, then
+    // try to bind it ourselves.
+    let _ = std::fs::remove_file(&path);
+    match UnixListener::bind(&path) {
+        Ok(listener) => {
+            tracing::info!(socket = %path.display(), "ssh-connect: BROKER OWNER (holds devices, serves peers)");
+            Election::Owner(OwnerListener(listener))
+        }
+        Err(_) => {
+            // Lost a race with another starting instance — try once more to attach.
+            if let Ok(stream) = UnixStream::connect(&path).await {
+                if let Some(peer) = handshake_client(stream).await {
+                    tracing::info!(socket = %path.display(), "ssh-connect: PROXY to existing broker");
+                    return Election::Proxy(peer);
+                }
+            }
+            tracing::warn!("ssh-connect: no broker reachable; running standalone owner");
+            Election::OwnerLocal
+        }
+    }
+}
+
+#[cfg(unix)]
+pub async fn serve_owner(listener: OwnerListener, owner: SshConnectServer) {
+    use rmcp::ServiceExt;
+
+    let listener = listener.0;
+    loop {
+        match listener.accept().await {
+            Ok((stream, _addr)) => {
+                let peer_server = owner.clone();
+                tokio::spawn(async move {
+                    match peer_server.serve(stream).await {
+                        Ok(running) => {
+                            let _ = running.waiting().await;
+                        }
+                        Err(e) => tracing::warn!(error = %e, "broker: peer service ended"),
+                    }
+                });
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "broker: socket accept failed");
+                break;
+            }
+        }
+    }
+}
+
+// ---- Platforms with neither transport -------------------------------------
+
+#[cfg(not(any(windows, unix)))]
+pub async fn elect() -> Election {
+    Election::OwnerLocal
+}
