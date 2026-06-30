@@ -13,10 +13,14 @@ earlier Rust projects into one binary:
   transfer uses SFTP; optional trust-on-first-use host-key checking is available.
 - **Interactive console** — prompt-aware management of switches, routers, and consoles
   over SSH (PTY), Telnet, and Serial, with pagination handling, enable/login flows, and
-  fleet commands. On Windows a named-pipe broker lets multiple MCP clients share one set
-  of live sessions and serial ports.
+  fleet commands. A broker (Windows named pipe / Unix domain socket) lets multiple MCP
+  clients share one set of live sessions and serial ports.
 
 Built on the `rmcp` MCP SDK. SSH is pure Rust via `russh` (no OpenSSL/C dependency).
+
+**Download:** prebuilt binaries for Linux, macOS, and Windows are on the
+[Releases page](https://github.com/mixelpixx/SSH-Connect/releases/latest) — no Rust
+toolchain required to run them.
 
 ## Two interaction models, one server
 
@@ -84,8 +88,10 @@ Windows and macOS need no system packages. On **Linux**, the `serialport` crate
 sudo apt-get install -y libudev-dev pkg-config   # Debian/Ubuntu
 ```
 
-Prebuilt binaries for Linux, macOS, and Windows are produced by the `release`
-GitHub Actions workflow and attached to tagged releases.
+Prefer not to build from source? Prebuilt binaries for Linux, macOS, and Windows are
+attached to every tagged release on the
+[Releases page](https://github.com/mixelpixx/SSH-Connect/releases/latest) (produced by
+the `release` GitHub Actions workflow).
 
 ## Register with an MCP client
 
