@@ -47,6 +47,8 @@ pub struct ConnectParams {
     pub key_path: Option<String>,
     /// Passphrase for an encrypted private key.
     pub passphrase: Option<String>,
+    /// ssh-agent identities are offered automatically; pass false to disable.
+    pub use_agent: Option<bool>,
     /// COM/serial port name, e.g. COM3 (serial).
     pub serial_port: Option<String>,
     /// Serial baud rate (default 9600).
@@ -120,17 +122,35 @@ impl SshConnectServer {
 
         let (transport, target): (Box<dyn Transport>, String) = match protocol {
             Protocol::Ssh => {
-                let host = host.ok_or_else(|| ToolError::bad_request("ssh requires 'host'"))?;
-                let username =
-                    username.ok_or_else(|| ToolError::bad_request("ssh requires 'username'"))?;
-                let port = port.unwrap_or(22);
+                // Fall back to ~/.ssh/config for anything neither the caller
+                // nor the inventory supplied. The lookup key is the address if
+                // one was given, otherwise the session name — so `connect
+                // {name: "prod-web"}` works off the alias alone.
+                let alias = host.clone().unwrap_or_else(|| name.clone());
+                let defaults = crate::ssh_config::lookup(&alias).await;
+
+                let host = host
+                    .or(defaults.hostname)
+                    .unwrap_or_else(|| alias.clone());
+                let username = username.or(defaults.username).ok_or_else(|| {
+                    ToolError::bad_request(format!(
+                        "ssh requires 'username': pass it, add it to the inventory, set User for '{alias}' in ~/.ssh/config, or set USER/USERNAME in the environment"
+                    ))
+                })?;
+                let port = port.or(defaults.port).unwrap_or(22);
+
+                let mut identity_files: Vec<PathBuf> = Vec::new();
+                identity_files.extend(key_path);
+                identity_files.extend(defaults.identity_files);
+
                 let t = SshTransport::connect(SshAuth {
                     host: &host,
                     port,
                     username: &username,
                     password: password.as_deref(),
-                    key_path: key_path.as_deref(),
+                    identity_files,
                     passphrase: passphrase.as_deref(),
+                    use_agent: params.use_agent.unwrap_or(true),
                 })
                 .await?;
                 (Box::new(t), format!("{host}:{port}"))

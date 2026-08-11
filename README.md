@@ -127,6 +127,18 @@ broker/role messages).
   `SSHCONNECT_HOST_KEY_CHECK=tofu` (the legacy `VPS_HOST_KEY_CHECK` is also accepted) to
   enable trust-on-first-use against `~/.ssh-connect/known_hosts`, which refuses a later
   key mismatch.
+- **SSH client config:** resolution is delegated to the local OpenSSH client — both
+  connect tools run `ssh -G <host>` and use the HostName, User, Port and IdentityFile it
+  reports, so `Host`/`Match` blocks, `Include`s, wildcards, percent tokens,
+  canonicalization and OpenSSH's own defaults (User = the local account, Port 22) all
+  behave exactly as they do for `ssh` itself. Explicit arguments and `hosts.toml` entries
+  still win. With no `ssh` on PATH, only the local account name is inferred.
+- **ssh-agent:** identities held by the agent are offered after any password and key file.
+  On Unix the socket comes from `SSH_AUTH_SOCK`; on Windows the OpenSSH named pipe
+  (`\\.\pipe\openssh-ssh-agent`) is used when that variable is unset. Pass
+  `useAgent: false` (`use_agent` on `connect`) to force a specific credential instead.
+  RSA identities are signed with the strongest hash the server advertises, so agent auth
+  also works against OpenSSH 8.8+, which rejects SHA-1 `ssh-rsa`.
 
 ## Broker (multi-instance session sharing)
 
@@ -149,9 +161,9 @@ cargo test --bin ssh-connect
 ```
 
 Unit tests cover the telnet IAC parser, prompt/ANSI output handling, the host inventory,
-serial-port probing, and the legacy SSH algorithm set. Protocol and broker behavior are
-checked by sending an `initialize` + `tools/list` sequence to the binary and by running
-two instances to confirm owner/proxy election.
+`ssh -G` alias resolution, serial-port probing, and the legacy SSH algorithm set.
+Protocol and broker behavior are checked by sending an `initialize` + `tools/list`
+sequence to the binary and by running two instances to confirm owner/proxy election.
 
 ## License
 

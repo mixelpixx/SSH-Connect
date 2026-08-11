@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rmcp::{
     ErrorData,
@@ -13,6 +16,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::server::SshConnectServer;
+use crate::ssh_config::{self, Credentials};
 use crate::state::{SshConnection, VpsClientHandler, exec_command, host_key_policy};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -25,9 +29,6 @@ fn invalid_err(msg: impl ToString) -> ErrorData {
     ErrorData::invalid_params(msg.to_string(), None)
 }
 
-fn default_port() -> u16 {
-    22
-}
 fn default_timeout() -> u64 {
     60_000
 }
@@ -37,19 +38,22 @@ fn default_timeout() -> u64 {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct SshConnectParams {
-    /// Hostname or IP address of the remote server
+    /// Hostname, IP, or a Host alias from ~/.ssh/config. Whatever the local
+    /// `ssh -G` resolves for it (HostName/User/Port/IdentityFile) is used, so
+    /// `ssh <alias>` and this tool reach the same machine the same way.
     host: String,
-    /// SSH port (default: 22)
-    #[serde(default = "default_port")]
-    port: u16,
-    /// SSH username
-    username: String,
-    /// Password for authentication (use instead of privateKeyPath)
+    /// SSH port. Overrides the alias; defaults to 22.
+    port: Option<u16>,
+    /// SSH username. Optional when the alias resolves a User.
+    username: Option<String>,
+    /// Password for authentication (omit to use a key or ssh-agent)
     password: Option<String>,
-    /// Path to PEM private key file (use instead of password)
+    /// Path to a private key file. Overrides the alias's IdentityFile.
     private_key_path: Option<String>,
     /// Passphrase to decrypt the private key (if encrypted)
     passphrase: Option<String>,
+    /// ssh-agent identities are offered automatically; pass false to disable.
+    use_agent: Option<bool>,
     /// Custom connection ID; auto-generated if omitted
     connection_id: Option<String>,
 }
@@ -110,92 +114,80 @@ struct SshDisconnectParams {
 
 #[tool_router(router = ssh_tool_router, vis = "pub(crate)")]
 impl SshConnectServer {
-    #[tool(description = "Connect to a remote server via SSH. Returns a connectionId used in all subsequent commands. Authenticate with password or privateKeyPath.")]
+    #[tool(description = "Connect to a remote server via SSH. Returns a connectionId used in all subsequent commands. `host` may be a Host alias from ~/.ssh/config: HostName/User/Port/IdentityFile come from the local `ssh -G`, so username defaults to the local account exactly as with `ssh`. Authenticates with password, private key, or ssh-agent (tried in that order).")]
     async fn ssh_connect(
         &self,
         Parameters(params): Parameters<SshConnectParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        if params.password.is_none() && params.private_key_path.is_none() {
-            return Err(invalid_err(
-                "Either password or privateKeyPath must be provided",
-            ));
+        // ~/.ssh/config supplies whatever the caller left out; explicit
+        // arguments always win.
+        let defaults = ssh_config::lookup(&params.host).await;
+        let host = defaults.hostname.unwrap_or_else(|| params.host.clone());
+        let port = params.port.or(defaults.port).unwrap_or(22);
+        let username = params
+            .username
+            .or(defaults.username)
+            .ok_or_else(|| {
+                invalid_err(format!(
+                    "no username for '{}': pass 'username', set User for this host in ~/.ssh/config, or set USER/USERNAME in the environment",
+                    params.host
+                ))
+            })?;
+
+        // Explicit key first, then the alias's IdentityFile entries.
+        let mut identity_files: Vec<PathBuf> = Vec::new();
+        if let Some(path) = params.private_key_path.as_deref() {
+            identity_files.push(PathBuf::from(path));
         }
+        identity_files.extend(defaults.identity_files);
 
         let config = Arc::new(client::Config::default());
-        let addr = format!("{}:{}", params.host, params.port);
+        let addr = format!("{host}:{port}");
 
         let handler = VpsClientHandler {
-            host: params.host.clone(),
-            port: params.port,
+            host: host.clone(),
+            port,
             policy: host_key_policy(),
         };
 
         let mut session = client::connect(config, addr.as_str(), handler)
             .await
-            .map_err(|e| internal_err(format!("SSH connect to {}: {}", addr, e)))?;
+            .map_err(|e| internal_err(format!("SSH connect to {addr}: {e}")))?;
 
-        if let Some(ref pw) = params.password {
-            let result = session
-                .authenticate_password(&params.username, pw)
-                .await
-                .map_err(|e| internal_err(format!("Password auth error: {e}")))?;
-            if result != russh::client::AuthResult::Success {
-                return Err(internal_err("Password authentication rejected by server"));
-            }
-        } else if let Some(ref key_path) = params.private_key_path {
-            let pem = tokio::fs::read_to_string(key_path)
-                .await
-                .map_err(|e| internal_err(format!("Cannot read key file '{}': {}", key_path, e)))?;
-
-            // Parse OpenSSH private key using russh's internal key types; decrypt if needed
-            let private_key = russh::keys::PrivateKey::from_openssh(pem.as_bytes())
-                .map_err(|e| internal_err(format!("Cannot parse private key: {e}")))?;
-
-            let private_key = if private_key.is_encrypted() {
-                let pass = params.passphrase.as_deref().ok_or_else(|| {
-                    internal_err("Private key is encrypted but no passphrase was provided")
-                })?;
-                private_key
-                    .decrypt(pass.as_bytes())
-                    .map_err(|e| internal_err(format!("Cannot decrypt private key: {e}")))?
-            } else {
-                private_key
-            };
-
-            let result = session
-                .authenticate_publickey(
-                    &params.username,
-                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
-                )
-                .await
-                .map_err(|e| internal_err(format!("Key auth error: {e}")))?;
-            if result != russh::client::AuthResult::Success {
-                return Err(internal_err("Public key authentication rejected by server"));
-            }
-        }
+        let used = ssh_config::authenticate(
+            &mut session,
+            Credentials {
+                username: username.clone(),
+                password: params.password,
+                identity_files,
+                passphrase: params.passphrase,
+                use_agent: params.use_agent.unwrap_or(true),
+            },
+        )
+        .await
+        .map_err(internal_err)?;
 
         let conn_id = params.connection_id.unwrap_or_else(|| {
             let id = uuid::Uuid::new_v4().to_string();
             format!("ssh-{}", &id[..8])
         });
 
-        tracing::info!(conn_id = %conn_id, host = %params.host, "SSH connected");
+        tracing::info!(conn_id = %conn_id, host = %host, auth = %used, "SSH connected");
 
         self.pool
             .insert(
                 conn_id.clone(),
                 SshConnection {
                     handle: session,
-                    host: params.host.clone(),
-                    port: params.port,
-                    username: params.username.clone(),
+                    host: host.clone(),
+                    port,
+                    username: username.clone(),
                 },
             )
             .await;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Connected to {}@{}:{}\nConnection ID: {}",
-            params.username, params.host, params.port, conn_id
+            "Connected to {username}@{host}:{port} using {used}\nConnection ID: {conn_id}"
         ))]))
     }
 
