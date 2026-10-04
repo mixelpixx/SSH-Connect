@@ -7,13 +7,14 @@
 
 use super::{Protocol, Transport};
 use crate::error::{ErrorKind, ToolError, ToolResult};
+use crate::ssh_config::{self, Credentials};
 use async_trait::async_trait;
-use russh::client::{self, AuthResult, Handle, Msg};
-use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+use russh::client::{self, Handle, Msg};
+use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKey};
 use russh::{cipher, kex, Channel, ChannelMsg, Disconnect, Preferred};
 use russh_sftp::client::SftpSession;
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
@@ -86,8 +87,12 @@ pub struct SshAuth<'a> {
     pub port: u16,
     pub username: &'a str,
     pub password: Option<&'a str>,
-    pub key_path: Option<&'a Path>,
+    /// Private keys to offer, most specific first (explicit `key_path`, then
+    /// whatever `~/.ssh/config` names for this host).
+    pub identity_files: Vec<PathBuf>,
     pub passphrase: Option<&'a str>,
+    /// Offer ssh-agent identities when password and keys do not authenticate.
+    pub use_agent: bool,
 }
 
 pub struct SshTransport {
@@ -122,58 +127,22 @@ impl SshTransport {
             )
         })?;
 
-        // Authenticate: prefer key if supplied, else password.
-        let result = if let Some(key_path) = auth.key_path {
-            let pem = tokio::fs::read_to_string(key_path).await.map_err(|e| {
-                ToolError::new(
-                    ErrorKind::AuthFailed,
-                    format!("read private key '{}': {e}", key_path.display()),
-                )
-            })?;
-            let private_key = PrivateKey::from_openssh(pem.as_bytes()).map_err(|e| {
-                ToolError::new(
-                    ErrorKind::AuthFailed,
-                    format!("parse private key '{}': {e}", key_path.display()),
-                )
-            })?;
-            let private_key = if private_key.is_encrypted() {
-                let pass = auth.passphrase.ok_or_else(|| {
-                    ToolError::new(
-                        ErrorKind::AuthFailed,
-                        "private key is encrypted but no passphrase was provided",
-                    )
-                })?;
-                private_key.decrypt(pass.as_bytes()).map_err(|e| {
-                    ToolError::new(ErrorKind::AuthFailed, format!("decrypt private key: {e}"))
-                })?
-            } else {
-                private_key
-            };
-            handle
-                .authenticate_publickey(
-                    auth.username,
-                    PrivateKeyWithHashAlg::new(Arc::new(private_key), None),
-                )
-                .await
-                .map_err(|e| ToolError::new(ErrorKind::AuthFailed, e.to_string()))?
-        } else if let Some(pw) = auth.password {
-            handle
-                .authenticate_password(auth.username, pw)
-                .await
-                .map_err(|e| ToolError::new(ErrorKind::AuthFailed, e.to_string()))?
-        } else {
-            return Err(ToolError::new(
-                ErrorKind::AuthFailed,
-                "no password or key_path supplied for SSH",
-            ));
-        };
+        // Password, then key files, then ssh-agent — shared with the
+        // server-ops `ssh_connect` path so both behave like `ssh(1)`.
+        let used = ssh_config::authenticate(
+            &mut handle,
+            Credentials {
+                username: auth.username.to_string(),
+                password: auth.password.map(str::to_string),
+                identity_files: auth.identity_files,
+                passphrase: auth.passphrase.map(str::to_string),
+                use_agent: auth.use_agent,
+            },
+        )
+        .await
+        .map_err(|e| ToolError::new(ErrorKind::AuthFailed, e))?;
 
-        if result != AuthResult::Success {
-            return Err(ToolError::new(
-                ErrorKind::AuthFailed,
-                "SSH authentication rejected (bad username/password/key)",
-            ));
-        }
+        tracing::debug!(host = auth.host, auth = %used, "ssh authenticated");
 
         let channel = handle.channel_open_session().await.map_err(|e| {
             ToolError::internal(format!("open ssh session channel: {e}"))

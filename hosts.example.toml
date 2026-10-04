@@ -6,6 +6,11 @@
 # interactive console tools; the server-ops `ssh_connect` tool takes its host
 # arguments directly.)
 #
+# Hosts that already live in ~/.ssh/config need no entry here at all: both
+# connect tools resolve a matching Host alias (HostName/User/Port/IdentityFile)
+# and authenticate through ssh-agent. Precedence is
+# explicit argument > this inventory > ~/.ssh/config.
+#
 # Point at a different file with the SSHCONNECT_HOSTS environment variable.
 #
 # Secrets: prefer environment variables over committing passwords. For a host

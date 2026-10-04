@@ -7,6 +7,7 @@ mod config;
 mod discovery;
 mod error;
 mod server;
+mod ssh_config;
 mod state;
 mod tools;
 mod transport;
