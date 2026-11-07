@@ -6,7 +6,7 @@ use std::{
 use rmcp::{
     ErrorData,
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content},
+    model::{CallToolResult, ContentBlock},
     tool, tool_router,
 };
 use russh::client;
@@ -186,7 +186,7 @@ impl SshConnectServer {
             )
             .await;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Connected to {username}@{host}:{port} using {used}\nConnection ID: {conn_id}"
         ))]))
     }
@@ -215,7 +215,7 @@ impl SshConnectServer {
                 .await
                 .map_err(|e| internal_err(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "exit_code: {}\nstdout:\n{}\nstderr:\n{}",
             exit_code, stdout, stderr
         ))]))
@@ -255,7 +255,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(format!("Flush failed: {e}")))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Uploaded '{}' ({} bytes) → '{}'",
             params.local_path,
             local_data.len(),
@@ -302,7 +302,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(format!("Cannot write '{}': {}", params.local_path, e)))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "Downloaded '{}' ({} bytes) → '{}'",
             params.remote_path,
             buf.len(),
@@ -339,7 +339,7 @@ impl SshConnectServer {
             lines.push(format!("  {} {:>12}  {}", kind, size, entry.file_name()));
         }
 
-        Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(lines.join("\n"))]))
     }
 
     #[tool(description = "Disconnect and close an active SSH connection.")]
@@ -349,7 +349,7 @@ impl SshConnectServer {
     ) -> Result<CallToolResult, ErrorData> {
         if self.pool.remove(&params.connection_id).await {
             tracing::info!(conn_id = %params.connection_id, "SSH disconnected");
-            Ok(CallToolResult::success(vec![Content::text(format!(
+            Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                 "Disconnected: {}",
                 params.connection_id
             ))]))

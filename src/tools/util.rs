@@ -2,7 +2,7 @@
 //! switch tools), which work with structured JSON results like the original
 //! PuTTY-MCP dispatcher.
 
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, ContentBlock};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
 /// JSON text so the model can read it directly.
 pub fn json_result(value: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
-    CallToolResult::success(vec![Content::text(text)])
+    CallToolResult::success(vec![ContentBlock::text(text)])
 }
 
 /// Resolve a per-command timeout from an optional `timeout_secs` argument.

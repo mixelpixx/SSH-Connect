@@ -97,21 +97,30 @@ impl ServerHandler for SshConnectServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         match &self.role {
             ServerRole::Owner => {
                 let tcc = ToolCallContext::new(self, request, context);
                 self.tool_router.call(tcc).await
             }
             #[cfg(any(windows, unix))]
-            ServerRole::Proxy(peer) => peer.call_tool(request).await.map_err(|e| {
-                ErrorData::internal_error(format!("broker proxy call failed: {e}"), None)
-            }),
+            ServerRole::Proxy(peer) => {
+                // Forward exactly one round. `Peer::call_tool` would drive any
+                // SEP-2322 input-required round itself through this process's
+                // unit ClientHandler; `call_tool_once` instead relays the
+                // InputRequired/Task envelope to the real downstream client.
+                peer.call_tool_once(request).await.map_err(|e| {
+                    ErrorData::internal_error(
+                        format!("broker proxy call failed: {e}"),
+                        None,
+                    )
+                })
+            }
         }
     }
 
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .build(),

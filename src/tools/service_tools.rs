@@ -1,7 +1,7 @@
 use rmcp::{
     ErrorData,
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content},
+    model::{CallToolResult, ContentBlock},
     tool, tool_router,
 };
 use russh_sftp::client::SftpSession;
@@ -102,7 +102,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "exit_code: {}\n{}{}",
             exit_code,
             stdout,
@@ -134,7 +134,7 @@ impl SshConnectServer {
                     .await
                     .map_err(|e| internal_err(e.to_string()))?;
                 let out = if stderr.is_empty() { stdout } else { format!("{}\n[stderr]\n{}", stdout, stderr) };
-                Ok(CallToolResult::success(vec![Content::text(out)]))
+                Ok(CallToolResult::success(vec![ContentBlock::text(out)]))
             }
 
             "enable" => {
@@ -149,7 +149,7 @@ impl SshConnectServer {
                 let (exit_code, stdout, stderr) = exec_command(&mut conn.handle, &cmd, 30_000)
                     .await
                     .map_err(|e| internal_err(e.to_string()))?;
-                Ok(CallToolResult::success(vec![Content::text(format!(
+                Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "exit_code: {}\n{}{}",
                     exit_code, stdout,
                     if stderr.is_empty() { String::new() } else { format!("\n[stderr]\n{}", stderr) }
@@ -167,7 +167,7 @@ impl SshConnectServer {
                 let (exit_code, stdout, stderr) = exec_command(&mut conn.handle, &cmd, 30_000)
                     .await
                     .map_err(|e| internal_err(e.to_string()))?;
-                Ok(CallToolResult::success(vec![Content::text(format!(
+                Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "exit_code: {}\n{}{}",
                     exit_code, stdout,
                     if stderr.is_empty() { String::new() } else { format!("\n[stderr]\n{}", stderr) }
@@ -184,7 +184,7 @@ impl SshConnectServer {
                 if exit_code != 0 && stdout.is_empty() {
                     return Err(internal_err(format!("Cannot read site '{}': {}", site, stderr)));
                 }
-                Ok(CallToolResult::success(vec![Content::text(stdout)]))
+                Ok(CallToolResult::success(vec![ContentBlock::text(stdout)]))
             }
 
             "write" => {
@@ -221,7 +221,7 @@ impl SshConnectServer {
                 if exit_code != 0 {
                     return Err(internal_err(format!("Copy failed: {}", stderr)));
                 }
-                Ok(CallToolResult::success(vec![Content::text(format!(
+                Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "Written to {}\nRun 'test' then 'enable' to apply.",
                     remote_path
                 ))]))
@@ -234,7 +234,7 @@ impl SshConnectServer {
                     .await
                     .map_err(|e| internal_err(e.to_string()))?;
                 let combined = format!("{}{}", stdout, if stderr.is_empty() { String::new() } else { format!("\n{}", stderr) });
-                Ok(CallToolResult::success(vec![Content::text(format!(
+                Ok(CallToolResult::success(vec![ContentBlock::text(format!(
                     "exit_code: {}\n{}", exit_code, combined
                 ))]))
             }

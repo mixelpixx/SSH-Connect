@@ -1,7 +1,7 @@
 use rmcp::{
     ErrorData,
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content},
+    model::{CallToolResult, ContentBlock},
     tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -101,7 +101,7 @@ impl SshConnectServer {
         } else {
             format!("{}\n[stderr]\n{}", stdout, stderr)
         };
-        Ok(CallToolResult::success(vec![Content::text(out)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(out)]))
     }
 
     #[tool(description = "Tail a log file or journalctl unit. service: nginx-access | nginx-error | syslog | auth | mysql | php | journalctl. Use 'unit' for journalctl service name. Use 'filter' for grep pattern.")]
@@ -150,7 +150,7 @@ impl SshConnectServer {
         } else {
             format!("{}\n[stderr]\n{}", stdout, stderr)
         };
-        Ok(CallToolResult::success(vec![Content::text(out)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(out)]))
     }
 
     #[tool(description = "List, find, or kill processes. action: list (top 30 by CPU) | find (by name) | kill (by pid or name). signal: TERM | KILL | HUP | USR1 | USR2 (default: TERM).")]
@@ -188,7 +188,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "exit_code: {}\n{}{}",
             exit_code,
             stdout,
