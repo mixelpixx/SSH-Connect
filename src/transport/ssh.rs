@@ -10,7 +10,7 @@ use crate::error::{ErrorKind, ToolError, ToolResult};
 use crate::ssh_config::{self, Credentials};
 use async_trait::async_trait;
 use russh::client::{self, Handle, Msg};
-use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKey};
+use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKeyOrCertificate};
 use russh::{cipher, kex, Channel, ChannelMsg, Disconnect, Preferred};
 use russh_sftp::client::SftpSession;
 use std::borrow::Cow;
@@ -76,7 +76,10 @@ struct Client;
 impl client::Handler for Client {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, _key: &PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        _key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
         Ok(true)
     }
 }

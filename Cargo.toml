@@ -10,17 +10,20 @@ name = "ssh-connect"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "1.8", features = [
-    "server",
+rmcp = {
+  version = "3.9",
+  features = [
     "client",
     "macros",
+    "server",
     "transport-io",
-] }
+  ]
+}
 
 # SSH + SFTP (pure Rust, no C dependencies)
-# ring feature avoids the aws-lc-rs C build dependency (default on 0.60)
-russh = { version = "0.60", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
-russh-sftp = "2.1"
+# ring feature avoids the aws-lc-rs C build dependency (russh's default backend)
+russh = { version = "0.65", default-features = false, features = ["des", "flate2", "ring", "rsa"] }
+russh-sftp = "3.0"
 
 # Telnet/Serial transports for interactive console management
 serialport = "4"
@@ -37,7 +40,7 @@ serde_json = "1"
 schemars = "1.0"
 
 # hosts.toml inventory parsing
-toml = "0.8"
+toml = "1"
 
 # Prompt / ANSI / pager matching for interactive sessions
 regex = "1"
@@ -53,7 +56,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 
 # Locating the per-user known_hosts file (~/.ssh-connect/known_hosts)
-dirs = "5"
+dirs = "7"
 
 # Logging
 tracing = "0.1"
@@ -63,8 +66,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["test-util"] }
 
 [profile.release]
-opt-level      = 3        # network/crypto tool — favor speed over min size
-lto            = "fat"
-codegen-units  = 1
-strip          = "symbols"
-panic          = "abort"
+opt-level = 3  # network/crypto tool — favor speed over min size
+strip = "symbols"
+lto = "fat"
+panic = "abort"
+codegen-units = 1

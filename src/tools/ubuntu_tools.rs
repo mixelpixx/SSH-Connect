@@ -1,7 +1,7 @@
 use rmcp::{
     ErrorData,
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content},
+    model::{CallToolResult, ContentBlock},
     tool, tool_router,
 };
 use russh_sftp::client::SftpSession;
@@ -159,7 +159,7 @@ impl SshConnectServer {
             .map_err(|e| internal_err(e.to_string()))?;
 
         let output = if stdout.is_empty() { stderr } else { stdout };
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "nginx {} (exit {})\n{}",
             params.action, exit_code, output
         ))]))
@@ -238,7 +238,7 @@ $(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -i securi | awk '{{p
             ));
         }
 
-        Ok(CallToolResult::success(vec![Content::text(results.join("\n\n"))]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(results.join("\n\n"))]))
     }
 
     #[tool(description = "Manage Let's Encrypt SSL certificates via certbot. Actions: issue (requires domain+email), renew, status, list.")]
@@ -294,7 +294,7 @@ $(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -i securi | awk '{{p
             .map_err(|e| internal_err(e.to_string()))?;
 
         let output = if stdout.is_empty() { stderr } else { stdout };
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "certbot {} (exit {}):\n{}",
             params.action, exit_code, output
         ))]))
@@ -423,7 +423,7 @@ $(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -i securi | awk '{{p
             }
         }
 
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             results.join("\n\n"),
         )]))
     }
@@ -492,7 +492,7 @@ $(apt-get -s dist-upgrade 2>/dev/null | grep '^Inst' | grep -i securi | awk '{{p
             .map_err(|e| internal_err(e.to_string()))?;
 
         let output = if stdout.is_empty() { stderr } else { stdout };
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "ufw {} (exit {}):\n{}",
             params.action, exit_code, output
         ))]))

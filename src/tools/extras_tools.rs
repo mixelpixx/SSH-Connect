@@ -1,7 +1,7 @@
 use rmcp::{
     ErrorData,
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, Content},
+    model::{CallToolResult, ContentBlock},
     tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -111,7 +111,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "exit_code: {}\n{}{}",
             exit_code,
             stdout,
@@ -171,7 +171,7 @@ impl SshConnectServer {
             .await
             .map_err(|e| internal_err(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
             "exit_code: {}\n{}{}",
             exit_code,
             stdout,

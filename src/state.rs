@@ -52,15 +52,20 @@ impl russh::client::Handler for VpsClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         let path = match &self.policy {
             HostKeyPolicy::AcceptAny => return Ok(true),
             HostKeyPolicy::Tofu(p) => p,
         };
 
+        // A certificate presents the underlying key (and its own identity is
+        // checked by the CA); pin the key so later bare-key presentations of
+        // the same host still match.
+        let public_key = server_public_key.public_key();
+
         // Serialize the key to its authorized_keys form for storage/comparison.
-        let key_line = match server_public_key.to_openssh() {
+        let key_line = match public_key.to_openssh() {
             Ok(k) => k.trim().to_string(),
             Err(_) => return Ok(false), // unencodable key — refuse rather than guess
         };
@@ -98,8 +103,13 @@ impl russh::client::Handler for VpsClientHandler {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "{} {}", id, key_line);
         }
-        let fp = server_public_key.fingerprint(Default::default());
-        tracing::info!(host = %id, fingerprint = %fp, "learned new host key (TOFU)");
+        let fp = public_key.fingerprint(Default::default());
+        let kind = if server_public_key.certificate().is_some() {
+            "certificate"
+        } else {
+            "public_key"
+        };
+        tracing::info!(host = %id, kind, fingerprint = %fp, "learned new host key (TOFU)");
         Ok(true)
     }
 }
